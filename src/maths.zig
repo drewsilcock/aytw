@@ -34,33 +34,34 @@ pub fn factorial(n: u32) usize {
 
 /// Generates k-th permutation using Lehmer code. Time: O(N²), Space: O(N).
 pub fn getPermutation(n: u32, k: usize, out: []u32) !void {
-    if (k >= factorial(n)) {
-        return error.IndexOutOfBounds;
-    }
+    if (out.len < n) return error.OutputTooSmall;
 
-    // Initialise with monotonically increasing list [0, 1, ..., n-1]
+    // Initialize available indices
+    var available: [32]u32 = undefined;
     for (0..n) |i| {
-        out[i] = @intCast(i);
+        available[i] = @intCast(i);
     }
 
-    var k_remain = k;
+    // Convert k to Lehmer code and build permutation
+    var k_remaining = k;
     var fact = factorial(n - 1);
 
-    for (0..n - 1) |i| {
-        const idx = k_remain / fact;
-        const perm_idx = i + idx;
+    for (0..n) |pos| {
+        // Get Lehmer digit for this position
+        const lehmer_digit = if (fact > 0) (k_remaining / fact) else 0;
 
-        // Rotate elements from i to perm_idx
-        const temp = out[perm_idx];
-        for (i..perm_idx) |j| {
-            out[j] = out[j + 1];
+        // Take the lehmer_digit-th element from available
+        out[pos] = available[lehmer_digit];
+
+        // Remove it from available (shift remaining elements)
+        for (lehmer_digit..n - pos - 1) |i| {
+            available[i] = available[i + 1];
         }
-        out[i] = temp;
 
-        k_remain %= fact;
-        //if (fact > 1) {
-        if (n - i - 1 > 1) {
-            fact /= (n - i - 1);
+        // Update k_remaining and factorial for next iteration
+        if (fact > 0) {
+            k_remaining %= fact;
+            fact /= if (n - pos - 1 > 0) (n - pos - 1) else 1;
         }
     }
 }

@@ -186,25 +186,33 @@ pub const Game = struct {
         self.probabilities.deinit(self.allocator);
     }
 
-    pub fn applyMatchup(self: Self, matchup: []u32, num_correct: u8) void {
+    pub fn numRemainingScenarios(self: Self) u64 {
+        return self.num_remaining_scenarios;
+    }
+
+    pub fn applyMatchup(self: *Self, matchup: []const u32, num_correct: u8) !void {
         for (self.probabilities.items) |*item| {
             item.* = 0;
         }
+
+        const perm = try self.allocator.alloc(u32, self.m);
+        defer self.allocator.free(perm);
 
         for (0..self.num_total_scenarios) |k| {
             if (self.eliminated.isSet(k)) {
                 continue;
             }
 
-            const perm = switch (self.mode) {
-                .standard => try self.getScenarioStandard(k),
-                .bisexual => try self.getScenarioBisexual(k),
-            };
+            switch (self.mode) {
+                .standard => try self.getScenarioStandard(k, perm),
+                .bisexual => try self.getScenarioBisexual(k, perm),
+            }
 
-            const num_matches = maths.countMatching(perm, matchup);
+            const num_matches = maths.countMatching(u32, perm, matchup);
             if (num_matches != num_correct) {
                 self.eliminated.set(k);
                 self.num_remaining_scenarios -= 1;
+                continue;
             }
 
             // TODO: This works differently in bisexual mode.
@@ -234,15 +242,10 @@ pub const Game = struct {
                 .bisexual => try self.getScenarioBisexual(k, perm),
             }
 
-            std.debug.print("Permutation {d}: [", .{k});
-            for (perm) |p| {
-                std.debug.print("{d}, ", .{p});
-            }
-            std.debug.print("] – truth booth = {}, this perm = {}\n", .{ is_match, perm[male_idx] == female_idx });
-
             if ((perm[male_idx] == female_idx) != is_match) {
                 self.eliminated.set(k);
                 self.num_remaining_scenarios -= 1;
+                continue;
             }
 
             // TODO: This works differently in bisexual mode.
@@ -262,18 +265,22 @@ pub const Game = struct {
         defer row.deinit(self.allocator);
 
         row.appendAssumeCapacity("");
-        row.appendSliceAssumeCapacity(self.names.items[0..self.m]);
+        row.appendSliceAssumeCapacity(self.names.items[self.m .. self.m * 2]);
         try table.setTitle(row.items);
         row.clearRetainingCapacity();
 
-        var printBuffer: [1024]u8 = undefined;
+        var printBuf: [1024]u8 = undefined;
+        var bufIdx: usize = 0;
 
-        for (0..self.m) |j| {
-            const idx = j + self.m;
-            row.appendAssumeCapacity(self.names.items[idx]);
-            for (self.probabilities.items[j * self.m .. (j + 1) * self.m]) |num_poss| {
+        // i = male index, j = female index
+        for (0..self.m) |i| {
+            row.appendAssumeCapacity(self.names.items[i]);
+            for (0..self.m) |j| {
+                const num_poss = self.probabilities.items[i * self.m + j];
                 const prob = @as(f32, @floatFromInt(num_poss)) / @as(f32, @floatFromInt(self.num_remaining_scenarios));
-                row.appendAssumeCapacity(try std.fmt.bufPrint(&printBuffer, "{d}", .{prob}));
+                const text = try std.fmt.bufPrint(printBuf[bufIdx..], "{d: >6.2}%", .{prob * 100});
+                bufIdx += text.len;
+                row.appendAssumeCapacity(text);
             }
             try table.addRow(row.items);
             row.clearRetainingCapacity();
