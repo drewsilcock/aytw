@@ -93,7 +93,7 @@ pub const Game = struct {
     eliminated: std.bit_set.DynamicBitSetUnmanaged,
     num_total_scenarios: usize,
     num_remaining_scenarios: usize,
-    probabilities: []u64,
+    probabilities: []u64, // TODO: This is more accurately describe as "possibilities".
     allocator: std.mem.Allocator,
 
     const Self = @This();
@@ -200,6 +200,24 @@ pub const Game = struct {
     }
 
     pub fn applyMatchup(self: *Self, matchup: []const u32, num_correct: u8) !void {
+        switch (self.mode) {
+            .standard => {
+                std.debug.assert(matchup.len == self.m);
+                std.debug.assert(num_correct <= self.m);
+            },
+            .bisexual => {
+                std.debug.assert(matchup.len == self.n);
+                std.debug.assert(num_correct <= self.n);
+
+                // In order to be a valid matchup, it must be symmetric, i.e.
+                // matchup[i]=j implies matchup[j]=i.
+                for (0..matchup.len) |i| {
+                    const j = matchup[i];
+                    std.debug.assert(matchup[j] == i);
+                }
+            },
+        }
+
         @memset(self.probabilities, 0);
 
         const size = switch (self.mode) {
@@ -210,12 +228,11 @@ pub const Game = struct {
         const perm = try self.allocator.alloc(u32, size);
         defer self.allocator.free(perm);
 
-        // Available array only needed for bisexual permutation generation, not standard mode.
-        var available: []bool = undefined;
-        if (self.mode == .bisexual) {
-            available = try self.allocator.alloc(bool, size);
-            defer self.allocator.free(available);
-        }
+        // Available array only needed for bisexual permutation generation, not
+        // standard mode, but it's cheap to allocate a small array so we just do
+        // it for either.
+        const available = try self.allocator.alloc(bool, size);
+        defer self.allocator.free(available);
 
         for (0..self.num_total_scenarios) |k| {
             if (self.eliminated.isSet(k)) {
@@ -227,23 +244,38 @@ pub const Game = struct {
                 .bisexual => self.getScenarioBisexual(k, available, perm),
             }
 
+            // For bisexual mode, as we are using a full list of all people,
+            // each correct pair will appear twice in our list, so n# matching
+            // pairs is half the n# matching elements in the full slice.
             const num_matches = maths.countMatching(u32, perm, matchup);
-            if (num_matches != num_correct) {
+            const num_pairs = if (self.mode == .bisexual) num_matches / 2 else num_matches;
+            if (num_pairs != num_correct) {
                 self.eliminated.set(k);
                 self.num_remaining_scenarios -= 1;
                 continue;
             }
 
-            // TODO: This works differently in bisexual mode.
             for (0..perm.len) |i| {
                 const j = perm[i];
-                const prob_idx = i * self.m + j;
+                const prob_idx = i * size + j;
                 self.probabilities[prob_idx] += 1;
             }
         }
     }
 
     pub fn applyTruthBooth(self: *Self, idx1: usize, idx2: usize, is_match: bool) !void {
+        switch (self.mode) {
+            .standard => {
+                std.debug.assert(idx1 < self.m);
+                std.debug.assert(idx2 < self.m);
+            },
+            .bisexual => {
+                std.debug.assert(idx1 < self.n);
+                std.debug.assert(idx2 < self.n);
+                std.debug.assert(idx1 != idx2);
+            },
+        }
+
         // For standard mode, idx1 = male, idx2 = female
         // For bisexual mode, idx1 = row, idx2 = column
         @memset(self.probabilities, 0);
@@ -256,12 +288,11 @@ pub const Game = struct {
         const perm = try self.allocator.alloc(u32, size);
         defer self.allocator.free(perm);
 
-        // Available array only needed for bisexual permutation generation, not standard mode.
-        var available: []bool = undefined;
-        if (self.mode == .bisexual) {
-            available = try self.allocator.alloc(bool, size);
-            defer self.allocator.free(available);
-        }
+        // Available array only needed for bisexual permutation generation, not
+        // standard mode, but it's cheap to allocate a small array so we just do
+        // it for either.
+        const available = try self.allocator.alloc(bool, size);
+        defer self.allocator.free(available);
 
         for (0..self.num_total_scenarios) |k| {
 
@@ -272,12 +303,10 @@ pub const Game = struct {
                 continue;
             }
 
-            std.debug.print("Generating {d}/{d} permutation/pairing\n", .{ k, self.num_total_scenarios });
             switch (self.mode) {
                 .standard => self.getScenarioStandard(k, perm),
                 .bisexual => self.getScenarioBisexual(k, available, perm),
             }
-            std.debug.print("Processed {d}/{d} scenarios\n", .{ k, self.num_total_scenarios });
 
             if ((perm[idx1] == idx2) != is_match) {
                 self.eliminated.set(k);
@@ -287,8 +316,25 @@ pub const Game = struct {
 
             for (0..perm.len) |i| {
                 const j = perm[i];
-                const prob_idx = i * self.m + j;
+                const prob_idx = i * size + j;
                 self.probabilities[prob_idx] += 1;
+            }
+        }
+    }
+
+    pub fn getPossibilities(self: *const Self, out: []u64) void {
+        @memcpy(out, self.probabilities);
+    }
+
+    pub fn getProbabilities(self: *const Self, out: []f64) !void {
+        const size = if (self.mode == .standard) self.m else self.n;
+        std.debug.assert(out.len == size * size);
+
+        for (0..size) |i| {
+            for (0..size) |j| {
+                const k = i * size + j;
+                const num_poss = self.probabilities[k];
+                out[k] = @as(f32, @floatFromInt(num_poss)) / @as(f32, @floatFromInt(self.num_remaining_scenarios));
             }
         }
     }
@@ -297,10 +343,9 @@ pub const Game = struct {
         var table = Table.init(self.allocator);
         defer table.deinit();
 
-        const row_size = switch (self.mode) {
-            .standard => self.m + 1,
-            .bisexual => self.n + 1,
-        };
+        const perm_size = if (self.mode == .standard) self.m else self.n;
+        const row_size = perm_size + 1;
+
         var row = try self.allocator.alloc([]const u8, row_size);
         defer self.allocator.free(row);
 
@@ -317,37 +362,17 @@ pub const Game = struct {
         var printBuf: [2048]u8 = undefined;
         var bufIdx: usize = 0;
 
-        // The logic here is fundamentally different for standard and bisexual modes.
-        switch (self.mode) {
-            .standard => {
-                // i = male index, j = female index
-                for (0..self.m) |i| {
-                    row[0] = self.names[i];
-                    for (0..self.m) |j| {
-                        const num_poss = self.probabilities[i * self.m + j];
-                        const prob = @as(f32, @floatFromInt(num_poss)) / @as(f32, @floatFromInt(self.num_remaining_scenarios));
-                        const text = try std.fmt.bufPrint(printBuf[bufIdx..], "{d: >6.2}%", .{prob * 100});
-                        bufIdx += text.len;
-                        row[j + 1] = text;
-                    }
-                    try table.addRow(row);
-                }
-            },
-            .bisexual => {
-                // k1 = index into all names (row-index)
-                // k2 = index into all names (column-index)
-                for (0..self.n) |k1| {
-                    row[0] = self.names[k1];
-                    for (0..self.n) |k2| {
-                        const num_poss = self.probabilities[k1 * self.n + k2];
-                        const prob = @as(f32, @floatFromInt(num_poss)) / @as(f32, @floatFromInt(self.num_remaining_scenarios));
-                        const text = try std.fmt.bufPrint(printBuf[bufIdx..], "{d: >6.2}%", .{prob * 100});
-                        bufIdx += text.len;
-                        row[k2 + 1] = text;
-                    }
-                    try table.addRow(row);
-                }
-            },
+        // i = male index / row index, j = female index / column index
+        for (0..perm_size) |i| {
+            row[0] = self.names[i];
+            for (0..perm_size) |j| {
+                const num_poss = self.probabilities[i * perm_size + j];
+                const prob = @as(f32, @floatFromInt(num_poss)) / @as(f32, @floatFromInt(self.num_remaining_scenarios));
+                const text = try std.fmt.bufPrint(printBuf[bufIdx..], "{d: >6.2}%", .{prob * 100});
+                bufIdx += text.len;
+                row[j + 1] = text;
+            }
+            try table.addRow(row);
         }
 
         try table.print_tty(false);
@@ -361,3 +386,250 @@ pub const Game = struct {
         maths.getKthPairing(self.n, k, available, out);
     }
 };
+
+// Run standard mode example with 3 men and 3 women.
+// https://github.com/daturkel/ayto/blob/ce7b53c962949c46a87f36352ecd6200a913a1be/README.md
+test "standard mode M=3" {
+    const allocator = std.testing.allocator;
+
+    var game = try Game.init(allocator, 6, .{
+        .mode = .standard,
+        .names = &.{ "Albert", "Bill", "Carl", "Daisy", "Emily", "Faith" },
+    });
+    defer game.deinit();
+
+    std.debug.print("Game initialised, num remaining scenarios = {d}\n", .{game.numRemainingScenarios()});
+    try game.printProbabilities();
+
+    std.debug.print(
+        "\nApplied truth booth #1 – Albert + Daisy = fail, num remaining scenarios = {d}\n",
+        .{game.numRemainingScenarios()},
+    );
+    try game.applyTruthBooth(0, 0, false);
+    try game.printProbabilities();
+
+    std.debug.print(
+        "\nApplied matchup n# 1 – (Albert, Emily), (Bill, Daisy), (Carl, Faith) = 1 beam, num remaining scenarios = {d}\n",
+        .{game.numRemainingScenarios()},
+    );
+    try game.applyMatchup(&.{ 1, 0, 2 }, 1);
+    try game.printProbabilities();
+}
+
+// https://github.com/daturkel/ayto/blob/ce7b53c962949c46a87f36352ecd6200a913a1be/demo.ipynb
+test "standard mode M=11" {
+    const allocator = std.testing.allocator;
+
+    var game = try Game.init(allocator, 22, .{
+        .mode = .standard,
+        .names = &.{
+            // Male names
+            "Al", // 0
+            "Bob", // 1
+            "Chuck", // 2
+            "Dale", // 3
+            "Evan", // 4
+            "Frank", // 5
+            "Graham", // 6
+            "Hugh", // 7
+            "Ike", // 8
+            "James", // 9
+            "Kirk", // 10
+            // Female names
+            "Lauren", // 0
+            "Mandy", // 1
+            "Nora", // 2
+            "Olivia", // 3
+            "Pam", // 4
+            "Quinn", // 5
+            "Riley", // 6
+            "Sam", // 7
+            "Tara", // 8
+            "Uma", // 9
+            "Violet", // 10
+        },
+    });
+    defer game.deinit();
+
+    std.debug.print("Game initialised, num remaining scenarios = {d}\n", .{game.numRemainingScenarios()});
+    try game.printProbabilities();
+
+    try game.applyTruthBooth(0, 1, false);
+    std.debug.print(
+        "\nApplied truth booth – Al + Mandy = fail, num remaining scenarios = {d}\n",
+        .{game.numRemainingScenarios()},
+    );
+    try game.printProbabilities();
+
+    try game.applyMatchup(&.{ 2, 1, 3, 0, 4, 5, 6, 5, 8, 9, 10 }, 3);
+    std.debug.print(
+        "\nApplied matchup – (Al, Nora), (Bob, Mandy), (Chuck, Olivia), (Dale, Lauren), (Evan, Pam), (Frank, Quinn), (Graham, Riley), (Hugh, Quinn), (Ike, Tara), (James, Uma), (Kirk, Violet) = 3 beams, num remaining scenarios = {d}\n",
+        .{game.numRemainingScenarios()},
+    );
+    try game.printProbabilities();
+}
+
+test "bisexual N=16" {
+    const allocator = std.testing.allocator;
+
+    const n = 16;
+
+    var game = try Game.init(allocator, n, .{
+        .mode = .bisexual,
+        .names = &.{
+            "Aasha", // 0
+            "Amber", // 1
+            "Basit", // 2
+            "Brandon", // 3
+            "Danny", // 4
+            "Jasmine", // 5
+            "Jenna", // 6
+            "Jonathan", // 7
+            "Justin", // 8
+            "Kai", // 9
+            "Kari", // 10
+            "Kylie", // 11
+            "Max", // 12
+            "Nour", // 13
+            "Paige", // 14
+            "Remy", // 15
+        },
+    });
+    defer game.deinit();
+
+    var poss = [_]u64{0} ** (n * n);
+    defer allocator.free(poss);
+
+    // Initial game state
+    try std.testing.expectEqual(2027025, game.numRemainingScenarios());
+    game.getPossibilities(&poss);
+    try std.testing.expectEqualSlices(u64, &.{
+        0.0,      13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500,
+        13513500, 0.0,      13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500,
+        13513500, 13513500, 0.0,      13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500,
+        13513500, 13513500, 13513500, 0.0,      13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500,
+        13513500, 13513500, 13513500, 13513500, 0.0,      13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500,
+        13513500, 13513500, 13513500, 13513500, 13513500, 0.0,      13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500,
+        13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 0.0,      13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500,
+        13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 0.0,      13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500,
+        13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 0.0,      13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500,
+        13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 0.0,      13513500, 13513500, 13513500, 13513500, 13513500, 13513500,
+        13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 0.0,      13513500, 13513500, 13513500, 13513500, 13513500,
+        13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 0.0,      13513500, 13513500, 13513500, 13513500,
+        13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 0.0,      13513500, 13513500, 13513500,
+        13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 0.0,      13513500, 13513500,
+        13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 0.0,      13513500,
+        13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 13513500, 0.0,
+    }, &poss);
+
+    // Episode 1 – truth booth
+    try game.applyTruthBooth(8, 13, false);
+    try std.testing.expectEqual(1891890, game.numRemainingScenarios());
+    game.getPossibilities(&poss);
+    try std.testing.expectEqualSlices(u64, &.{
+        0.0, 12612600, 12612600, 12612600, 12612600, 12612600, 12612600, 12612600, 12612600, 12612600, 12612600, 12612600, 12612600, 12612600, 12612600, 12612600,
+    }, &poss);
+
+    try game.applyMatchup(&.{
+        14, // Aasha -> Paige
+        13, // Amber -> Nour
+        7, // Basit -> Jonathan
+        15, // Brandon -> Remy
+        9, // Danny -> Kai
+        6, // Jasmine -> Jenna
+        5, // Jenna -> Jasmine
+        2, // Jonathan -> Basit
+        12, // Justin -> Max
+        4, // Kai -> Danny
+        11, // Kari -> Kylie
+        10, // Kylie -> Kari
+        8, // Max -> Justin
+        1, // Nour -> Amber
+        0, // Paige -> Aasha
+        3, // Remy -> Brandon
+    }, 2);
+
+    try game.applyTruthBooth(3, 15, false);
+
+    try game.applyMatchup(&.{
+        3, // Aasha -> Brandon
+        13, // Amber -> Nour
+        7, // Basit -> Jonathan
+        0, // Brandon -> Aasha
+        15, // Danny -> Remy
+        8, // Jasmine -> Justin
+        9, // Jenna -> Kai
+        2, // Jonathan -> Basit
+        5, // Justin -> Jasmine
+        6, // Kai -> Jenna
+        11, // Kari -> Kylie
+        10, // Kylie -> Kari
+        14, // Max -> Paige
+        1, // Nour -> Amber
+        12, // Paige -> Max
+        4, // Remy -> Danny
+    }, 2);
+
+    try game.applyTruthBooth(6, 9, false);
+
+    try game.applyMatchup(&.{
+        12, // Aasha -> Max
+        14, // Amber -> Paige
+        15, // Basit -> Remy
+        7, // Brandon -> Jonathan
+        9, // Danny -> Kai
+        13, // Jasmine -> Nour
+        8, // Jenna -> Justin
+        3, // Jonathan -> Brandon
+        6, // Justin -> Jenna
+        4, // Kai -> Danny
+        11, // Kari -> Kylie
+        10, // Kylie -> Kari
+        0, // Max -> Aasha
+        5, // Nour -> Jasmine
+        1, // Paige -> Amber
+        2, // Remy -> Basit
+    }, 2);
+
+    try game.applyTruthBooth(4, 6, false);
+
+    try game.applyMatchup(&.{
+        15, // Aasha -> Remy
+        13, // Amber -> Nour
+        4, // Basit -> Danny
+        5, // Brandon -> Jasmine
+        2, // Danny -> Basit
+        3, // Jasmine -> Brandon
+        14, // Jenna -> Paige
+        11, // Jonathan -> Kylie
+        12, // Justin -> Max
+        10, // Kai -> Kari
+        9, // Kari -> Kai
+        7, // Kylie -> Jonathan
+        8, // Max -> Justin
+        1, // Nour -> Amber
+        6, // Paige -> Jenna
+        0, // Remy -> Aasha
+    }, 1);
+
+    try game.applyTruthBooth(10, 11, false);
+
+    try game.applyMatchup(&.{
+        9, // Aasha -> Kai
+        13, // Amber -> Nour
+        15, // Basit -> Remy
+        12, // Brandon -> Max
+        10, // Danny -> Kari
+        14, // Jasmine -> Paige
+        11, // Jenna -> Kylie
+        8, // Jonathan -> Justin
+        7, // Justin -> Jonathan
+        0, // Kai -> Aasha
+        4, // Kari -> Danny
+        6, // Kylie -> Jenna
+        3, // Max -> Brandon
+        1, // Nour -> Amber
+        5, // Paige -> Jasmine
+        2, // Remy -> Basit
+    }, 0);
+}
