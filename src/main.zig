@@ -7,9 +7,10 @@ pub fn main() !void {
     defer std.debug.assert(gpa.deinit() == .ok);
     const allocator = gpa.allocator();
 
-    try standard3Example(allocator);
-    std.debug.print("\n##############\n\n", .{});
-    try standard11Example(allocator);
+    //try standard3Example(allocator);
+    //std.debug.print("\n##############\n\n", .{});
+    //try standard11Example(allocator);
+    try bisexualSeason8Example(allocator);
 }
 
 /// Run standard mode example with 3 men and 3 women.
@@ -88,4 +89,44 @@ fn standard11Example(allocator: std.mem.Allocator) !void {
         .{game.numRemainingScenarios()},
     );
     try game.printProbabilities();
+}
+
+// Construct the Season 8 bisexual game (spoilers).
+// https://github.com/daturkel/pyto/blob/master/AYTO_S8.ipynb
+fn bisexualSeason8Example(allocator: std.mem.Allocator) !void {
+    const names = &.{
+        "Aasha", // 0
+        "Amber", // 1
+        "Basit", // 2
+        "Brandon", // 3
+        "Danny", // 4
+        "Jasmine", // 5
+        "Jenna", // 6
+        "Jonathan", // 7
+        "Justin", // 8
+        "Kai", // 9
+        "Kari", // 10
+        "Kylie", // 11
+        "Max", // 12
+        "Nour", // 13
+        "Paige", // 14
+        "Remy", // 15
+    };
+
+    var game = try aytw.Game.init(allocator, 16, .{
+        .mode = .bisexual,
+        .names = names,
+    });
+    defer game.deinit();
+
+    std.debug.print("Game initialised, num remaining scenarios = {d}\n", .{game.numRemainingScenarios()});
+    try game.printProbabilities();
+
+    const tik = std.time.nanoTimestamp();
+    try game.applyTruthBooth(8, 13, false);
+    const tok = std.time.nanoTimestamp();
+    std.debug.print(
+        "Applied truth booth – Justin + Nour = fail, num remaining scenarios = {d}, took {d} ns\n",
+        .{ game.numRemainingScenarios(), tok - tik },
+    );
 }

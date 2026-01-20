@@ -140,12 +140,20 @@ pub fn build(b: *std.Build) void {
     // A run step that will run the second test executable.
     const run_exe_tests = b.addRunArtifact(exe_tests);
 
+    const maths_tests = b.addTest(.{ .root_module = b.addModule("maths", .{
+        .root_source_file = b.path("src/maths.zig"),
+        .target = target,
+        .optimize = optimize,
+    }) });
+    const run_maths_tests = b.addRunArtifact(maths_tests);
+
     // A top level step for running all tests. dependOn can be called multiple
     // times and since the two run steps do not depend on one another, this will
     // make the two of them run in parallel.
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
+    test_step.dependOn(&run_maths_tests.step);
 
     // Just like flags, top level steps are also listed in the `--help` menu.
     //
@@ -164,4 +172,5 @@ pub fn build(b: *std.Build) void {
     check.dependOn(&exe.step);
     check.dependOn(&mod_tests.step);
     check.dependOn(&exe_tests.step);
+    check.dependOn(&maths_tests.step);
 }
