@@ -137,6 +137,12 @@ fn bisexual6Example(allocator: std.mem.Allocator) !void {
     tok = std.time.milliTimestamp();
     std.debug.print("Done in {d} ms, num remaining scenarios = {d}\n", .{ tok - tik, game.numRemainingScenarios() });
     try game.printProbabilities();
+
+    const optimalTruthBooth = game.findOptimalTruthBooth();
+    std.debug.print(
+        "Optimal truth booth = {any} = ({s}, {s})\n",
+        .{ optimalTruthBooth, game.names[optimalTruthBooth[0]], game.names[optimalTruthBooth[1]] },
+    );
 }
 
 // Construct the Season 8 bisexual game (spoilers).
@@ -336,4 +342,10 @@ fn bisexualSeason8Example(allocator: std.mem.Allocator) !void {
     std.debug.print("Done in {d} ms, num remaining scenarios = {d}\n", .{ tok - tik, game.numRemainingScenarios() });
     try game.printProbabilities();
     std.debug.print("\n", .{});
+
+    const optimalTruthBooth = game.findOptimalTruthBooth();
+    std.debug.print(
+        "Optimal truth booth = {any} = ({s}, {s})\n",
+        .{ optimalTruthBooth, game.names[optimalTruthBooth[0]], game.names[optimalTruthBooth[1]] },
+    );
 }

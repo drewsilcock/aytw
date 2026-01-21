@@ -164,9 +164,7 @@ pub const Game = struct {
 
         for (0..num_possibilities) |k| {
             // If we're on the diagonal and in bisexual mode, num possibilties is 0.
-            const i = k % n;
-            const j = k / n;
-            if (options.mode == .bisexual and i == j) {
+            if (options.mode == .bisexual and (k % n) == (k / n)) {
                 probabilities[k] = 0;
             } else {
                 probabilities[k] = starting_num_poss;
@@ -323,15 +321,11 @@ pub const Game = struct {
     }
 
     pub fn getProbabilities(self: *const Self, out: []f64) !void {
-        const size = if (self.mode == .standard) self.m else self.n;
-        std.debug.assert(out.len == size * size);
+        std.debug.assert(out.len == self.probabilities.len);
 
-        for (0..size) |i| {
-            for (0..size) |j| {
-                const k = i * size + j;
-                const num_poss = self.probabilities[k];
-                out[k] = @as(f32, @floatFromInt(num_poss)) / @as(f32, @floatFromInt(self.num_remaining_scenarios));
-            }
+        for (0..self.probabilities.len) |k| {
+            const num_poss = self.probabilities[k];
+            out[k] = @as(f32, @floatFromInt(num_poss)) / @as(f32, @floatFromInt(self.num_remaining_scenarios));
         }
     }
 
@@ -372,6 +366,40 @@ pub const Game = struct {
         }
 
         try table.print_tty(false);
+    }
+
+    pub fn findOptimalTruthBooth(self: *const Self) [2]usize {
+        // As truth booth is a binary result (either match or no match), the
+        // entropy follows the binomial entropy function:
+        // H(X) = -plog(p) - (1-p)log(p)
+        // This has a maximum at p=50% so we want to find the two pairs with
+        // probability closest to 50%.
+        const size = if (self.mode == .standard) self.m else self.n;
+        var result = [_]usize{ 0, 0 };
+
+        var best_dist: u64 = std.math.maxInt(u64);
+
+        for (0..self.probabilities.len) |k| {
+            const num_poss = self.probabilities[k];
+
+            // Finding p=0.5 is the same as finding pair where n# pair
+            // possibilities = total n# scenarios / 2. Easier to multiply than
+            // divide.
+
+            // Technically, this int cast is unsafe, but it's never going to be
+            // the case that n# remaining scenarios > max i64 as this isn't
+            // computable.
+            const dist_to_opt = @abs(@as(i64, @intCast(self.num_remaining_scenarios)) - @as(i64, @intCast(num_poss * 2)));
+
+            if (dist_to_opt < best_dist) {
+                best_dist = dist_to_opt;
+
+                result[0] = k % size;
+                result[1] = k / size;
+            }
+        }
+
+        return result;
     }
 
     fn getScenarioStandard(self: *const Self, k: usize, out: []u32) void {
@@ -855,6 +883,14 @@ test "bisexual N=16" {
         2,  14, 0,  0,  0,  0,  18, 0,  0,  0,  0, 0, 21, 0,  0,  0,
         21, 6,  0,  0,  7,  0,  0,  0,  2,  1,  6, 6, 2,  4,  0,  0,
     }, game.probabilities);
+
+    // Jasmine = 5 and Nour = 13 have 41.82% of match which makes then the
+    // optimal next truth booth. The order doesn't matter here as this is
+    // bisexual mode.
+    const optimalTruthBooth = game.findOptimalTruthBooth();
+    _ = std.mem.eql(usize, &.{ 5, 13 }, &optimalTruthBooth);
+    try std.testing.expectEqual(optimalTruthBooth.len, 2);
+    try std.testing.expect((optimalTruthBooth[0] == 5 and optimalTruthBooth[1] == 13) or (optimalTruthBooth[0] == 13 and optimalTruthBooth[1] == 5));
 
     // The season continues for another 6 episodes, but my reference material
     // does not do the full calculations of the probabilities, so I cannot be
