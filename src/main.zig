@@ -140,8 +140,13 @@ fn bisexual6Example(allocator: std.mem.Allocator) !void {
 
     const optimalTruthBooth = game.findOptimalTruthBooth();
     std.debug.print(
-        "Optimal truth booth = {any} = ({s}, {s})\n",
-        .{ optimalTruthBooth, game.names[optimalTruthBooth[0]], game.names[optimalTruthBooth[1]] },
+        "Optimal truth booth: {any} = ({s}, {s}), entropy = {d}\n",
+        .{
+            optimalTruthBooth.pair,
+            game.names[optimalTruthBooth.pair[0]],
+            game.names[optimalTruthBooth.pair[1]],
+            optimalTruthBooth.entropy,
+        },
     );
 }
 
@@ -178,10 +183,24 @@ fn bisexualSeason8Example(allocator: std.mem.Allocator) !void {
     try game.printProbabilities();
     std.debug.print("\n", .{});
 
-    std.debug.print("Applying truth booth – Justin + Nour = fail\n", .{});
+    std.debug.print("Calculating optimal matchup\n", .{});
     var tik = std.time.milliTimestamp();
-    try game.applyTruthBooth(8, 13, false);
+    var optimalMatchup = [_]u32{0} ** 16;
+    var optimalMatchupEntropy = try game.findOptimalMatchup(&optimalMatchup);
     var tok = std.time.milliTimestamp();
+
+    var buf: [2048]u8 = undefined;
+    var optimalMatchupStr = try game.matchupToString(&optimalMatchup, &buf);
+
+    std.debug.print(
+        "Done in {d} ms, optimal matchup = {any} ({s}), entropy = {d}\n",
+        .{ tok - tik, optimalMatchup, optimalMatchupStr, optimalMatchupEntropy },
+    );
+
+    std.debug.print("Applying truth booth – Justin + Nour = fail\n", .{});
+    tik = std.time.milliTimestamp();
+    try game.applyTruthBooth(8, 13, false);
+    tok = std.time.milliTimestamp();
     std.debug.print("Done in {d} ms, num remaining scenarios = {d}\n", .{ tok - tik, game.numRemainingScenarios() });
     try game.printProbabilities();
     std.debug.print("\n", .{});
@@ -244,7 +263,7 @@ fn bisexualSeason8Example(allocator: std.mem.Allocator) !void {
     try game.printProbabilities();
     std.debug.print("\n", .{});
 
-    std.debug.print("Applied truth booth – Jenna + Kai = fail\n", .{});
+    std.debug.print("Applying truth booth – Jenna + Kai = fail\n", .{});
     tik = std.time.milliTimestamp();
     try game.applyTruthBooth(6, 9, false);
     tok = std.time.milliTimestamp();
@@ -345,7 +364,25 @@ fn bisexualSeason8Example(allocator: std.mem.Allocator) !void {
 
     const optimalTruthBooth = game.findOptimalTruthBooth();
     std.debug.print(
-        "Optimal truth booth = {any} = ({s}, {s})\n",
-        .{ optimalTruthBooth, game.names[optimalTruthBooth[0]], game.names[optimalTruthBooth[1]] },
+        "Optimal truth booth: {any} = ({s}, {s}), entropy = {d}\n",
+        .{
+            optimalTruthBooth.pair,
+            game.names[optimalTruthBooth.pair[0]],
+            game.names[optimalTruthBooth.pair[1]],
+            optimalTruthBooth.entropy,
+        },
+    );
+
+    std.debug.print("Calculating optimal matchup\n", .{});
+    tik = std.time.milliTimestamp();
+    optimalMatchup = [_]u32{0} ** 16;
+    optimalMatchupEntropy = try game.findOptimalMatchup(&optimalMatchup);
+    tok = std.time.milliTimestamp();
+
+    optimalMatchupStr = try game.matchupToString(&optimalMatchup, &buf);
+
+    std.debug.print(
+        "Done in {d} ms, optimal matchup = {any} ({s}), entropy = {d}\n",
+        .{ tok - tik, optimalMatchup, optimalMatchupStr, optimalMatchupEntropy },
     );
 }

@@ -198,30 +198,20 @@ pub const Game = struct {
     }
 
     pub fn applyMatchup(self: *Self, matchup: []const u32, num_correct: u8) !void {
-        switch (self.mode) {
-            .standard => {
-                std.debug.assert(matchup.len == self.m);
-                std.debug.assert(num_correct <= self.m);
-            },
-            .bisexual => {
-                std.debug.assert(matchup.len == self.n);
-                std.debug.assert(num_correct <= self.n);
+        const size = if (self.mode == .standard) self.m else self.n;
+        std.debug.assert(matchup.len == size);
+        std.debug.assert(num_correct <= size);
 
-                // In order to be a valid matchup, it must be symmetric, i.e.
-                // matchup[i]=j implies matchup[j]=i.
-                for (0..matchup.len) |i| {
-                    const j = matchup[i];
-                    std.debug.assert(matchup[j] == i);
-                }
-            },
+        if (self.mode == .bisexual) {
+            // In order to be a valid matchup, it must be symmetric, i.e.
+            // matchup[i]=j implies matchup[j]=i.
+            for (0..matchup.len) |i| {
+                const j = matchup[i];
+                std.debug.assert(matchup[j] == i);
+            }
         }
 
         @memset(self.probabilities, 0);
-
-        const size = switch (self.mode) {
-            .standard => self.m,
-            .bisexual => self.n,
-        };
 
         const perm = try self.allocator.alloc(u32, size);
         defer self.allocator.free(perm);
@@ -237,10 +227,7 @@ pub const Game = struct {
                 continue;
             }
 
-            switch (self.mode) {
-                .standard => self.getScenarioStandard(k, perm),
-                .bisexual => self.getScenarioBisexual(k, available, perm),
-            }
+            self.getScenario(k, available, perm);
 
             // For bisexual mode, as we are using a full list of all people,
             // each correct pair will appear twice in our list, so n# matching
@@ -262,26 +249,16 @@ pub const Game = struct {
     }
 
     pub fn applyTruthBooth(self: *Self, idx1: usize, idx2: usize, is_match: bool) !void {
-        switch (self.mode) {
-            .standard => {
-                std.debug.assert(idx1 < self.m);
-                std.debug.assert(idx2 < self.m);
-            },
-            .bisexual => {
-                std.debug.assert(idx1 < self.n);
-                std.debug.assert(idx2 < self.n);
-                std.debug.assert(idx1 != idx2);
-            },
+        const size = if (self.mode == .standard) self.m else self.n;
+        std.debug.assert(idx1 < size and idx2 < size);
+
+        if (self.mode == .bisexual) {
+            std.debug.assert(idx1 != idx2);
         }
 
         // For standard mode, idx1 = male, idx2 = female
         // For bisexual mode, idx1 = row, idx2 = column
         @memset(self.probabilities, 0);
-
-        const size = switch (self.mode) {
-            .standard => self.m,
-            .bisexual => self.n,
-        };
 
         const perm = try self.allocator.alloc(u32, size);
         defer self.allocator.free(perm);
@@ -301,10 +278,7 @@ pub const Game = struct {
                 continue;
             }
 
-            switch (self.mode) {
-                .standard => self.getScenarioStandard(k, perm),
-                .bisexual => self.getScenarioBisexual(k, available, perm),
-            }
+            self.getScenario(k, available, perm);
 
             if ((perm[idx1] == idx2) != is_match) {
                 self.eliminated.set(k);
@@ -318,6 +292,152 @@ pub const Game = struct {
                 self.probabilities[prob_idx] += 1;
             }
         }
+    }
+
+    pub fn findOptimalTruthBooth(self: *const Self) struct { pair: [2]usize, entropy: f64 } {
+        // As truth booth is a binary result (either match or no match), the
+        // entropy follows the binomial entropy function:
+        // H(X) = -plog(p) - (1-p)log(p)
+        // This has a maximum at p=50% so we want to find the two pairs with
+        // probability closest to 50%.
+        const size = if (self.mode == .standard) self.m else self.n;
+        var result = [_]usize{ 0, 0 };
+
+        var best_dist: u64 = std.math.maxInt(u64);
+        var best_entropy: f64 = 0.0;
+
+        for (0..self.probabilities.len) |k| {
+            const num_poss = self.probabilities[k];
+
+            // Finding p=0.5 is the same as finding pair where n# pair
+            // possibilities = total n# scenarios / 2. Easier to multiply than
+            // divide.
+
+            // Technically, this int cast is unsafe, but it's never going to be
+            // the case that n# remaining scenarios > max i64 as this isn't
+            // computable.
+            const dist_to_opt = @abs(@as(i64, @intCast(self.num_remaining_scenarios)) - @as(i64, @intCast(num_poss * 2)));
+
+            if (dist_to_opt < best_dist) {
+                best_dist = dist_to_opt;
+
+                result[0] = k % size;
+                result[1] = k / size;
+
+                const prob = @as(f64, @floatFromInt(num_poss)) / @as(f64, @floatFromInt(self.num_remaining_scenarios));
+                best_entropy = -prob * @log2(prob) - (1.0 - prob) * @log2(1.0 - prob);
+            }
+        }
+
+        return .{ .pair = result, .entropy = best_entropy };
+    }
+
+    pub fn findOptimalMatchup(self: *const Self, out: []u32) !f64 {
+        // Calculating entropy for a particular matchup is O(N) so calculating
+        // for all potential matchups is O(N^2) (N=num remaining scenarios). To
+        // prevent deadlock, we cap the max n# matchups we assess. We use a
+        // naive approach of 'try the first X many' which is not a good way of
+        // exploring the matchup space.
+        //
+        // On my M3 Pro, doing 100 million checks takes 60 seconds, so 10
+        // million seems a reasonable number here.
+        //
+        // TODO: Use some heuristic to reduce the matchup space.
+        const max_checks = 10_000_000 / self.num_remaining_scenarios;
+        var num_checks: usize = 0;
+
+        var best_entropy: f64 = 0.0;
+
+        const size = if (self.mode == .standard) self.m else self.n;
+        std.debug.assert(out.len == size);
+
+        const matchup = try self.allocator.alloc(u32, size);
+        defer self.allocator.free(matchup);
+        const available = try self.allocator.alloc(bool, size);
+        defer self.allocator.free(available);
+
+        // These are needed for inside the matchup entropy calculator – we
+        // allocate them in here instead of allocating them on each loop, which
+        // would be expensive.
+        const outcome_poss = try self.allocator.alloc(usize, self.m + 1);
+        defer self.allocator.free(outcome_poss);
+        const inner_perm = try self.allocator.alloc(u32, size);
+        defer self.allocator.free(inner_perm);
+
+        @memset(out, 0);
+
+        for (0..self.num_total_scenarios) |k| {
+            if (self.eliminated.isSet(k)) {
+                continue;
+            }
+
+            if (num_checks >= max_checks) {
+                break;
+            }
+            num_checks += 1;
+
+            self.getScenario(k, available, matchup);
+
+            // We can re-use the available array here as we don't need it again this loop.
+            const matchup_entropy = self.matchupEntropy(matchup, outcome_poss, inner_perm, available);
+            if (matchup_entropy > best_entropy) {
+                best_entropy = matchup_entropy;
+                @memcpy(out, matchup);
+            }
+        }
+
+        return best_entropy;
+    }
+
+    pub fn matchupEntropy(self: *const Self, matchup: []const u32, outcome_poss: []usize, perm: []u32, available: []bool) f64 {
+        // Find entropy of the input matchup by calculating:
+        // H = -∑plog₂p
+        // In this case there the n# possible outcomes is M in standard and N in
+        // bisexual mode.
+
+        const size = if (self.mode == .standard) self.m else self.n;
+        std.debug.assert(matchup.len == size);
+
+        // For each possible outcome, keep track of n# remaining scenarios that fit that outcome in outcome_poss.
+        @memset(outcome_poss, 0);
+
+        if (self.mode == .bisexual) {
+            // In order to be a valid matchup, it must be symmetric, i.e.
+            // matchup[i]=j implies matchup[j]=i.
+            for (0..matchup.len) |i| {
+                const j = matchup[i];
+                std.debug.assert(matchup[j] == i);
+            }
+        }
+
+        for (0..self.num_total_scenarios) |k| {
+            if (self.eliminated.isSet(k)) {
+                continue;
+            }
+
+            self.getScenario(k, available, perm);
+
+            // For bisexual mode, as we are using a full list of all people,
+            // each correct pair will appear twice in our list, so n# matching
+            // pairs is half the n# matching elements in the full slice.
+            const num_matches = maths.countMatching(u32, perm, matchup);
+            const num_pairs = if (self.mode == .bisexual) num_matches / 2 else num_matches;
+
+            outcome_poss[num_pairs] += 1;
+        }
+
+        // To get entropy from n# possibilities, we take each outcome and
+        // calculate -plog₂(p) where p = n# scenarios for this outcome / n#
+        // scenarios in total.
+        var entropy: f64 = 0.0;
+
+        for (outcome_poss) |num_poss| {
+            if (num_poss == 0) continue;
+            const p = @as(f64, @floatFromInt(num_poss)) / @as(f64, @floatFromInt(self.num_remaining_scenarios));
+            entropy -= p * @log2(p);
+        }
+
+        return entropy;
     }
 
     pub fn getProbabilities(self: *const Self, out: []f64) !void {
@@ -368,46 +488,46 @@ pub const Game = struct {
         try table.print_tty(false);
     }
 
-    pub fn findOptimalTruthBooth(self: *const Self) [2]usize {
-        // As truth booth is a binary result (either match or no match), the
-        // entropy follows the binomial entropy function:
-        // H(X) = -plog(p) - (1-p)log(p)
-        // This has a maximum at p=50% so we want to find the two pairs with
-        // probability closest to 50%.
+    /// Turn index-based matchup representation into string-based one based on
+    /// pairs of names, e.g. (Aasha, Amber), (Mike, Jonathan).
+    pub fn matchupToString(self: *const Self, matchup: []const u32, out: []u8) ![]u8 {
         const size = if (self.mode == .standard) self.m else self.n;
-        var result = [_]usize{ 0, 0 };
+        std.debug.assert(matchup.len == size);
 
-        var best_dist: u64 = std.math.maxInt(u64);
+        var done = try self.allocator.alloc(bool, size);
+        @memset(done, false);
+        defer self.allocator.free(done);
 
-        for (0..self.probabilities.len) |k| {
-            const num_poss = self.probabilities[k];
+        var bufIdx: usize = 0;
+        for (0..size) |i| {
+            if (done[i]) continue;
 
-            // Finding p=0.5 is the same as finding pair where n# pair
-            // possibilities = total n# scenarios / 2. Easier to multiply than
-            // divide.
+            const j = matchup[i];
 
-            // Technically, this int cast is unsafe, but it's never going to be
-            // the case that n# remaining scenarios > max i64 as this isn't
-            // computable.
-            const dist_to_opt = @abs(@as(i64, @intCast(self.num_remaining_scenarios)) - @as(i64, @intCast(num_poss * 2)));
+            const name1 = self.names[i];
+            const name2 = self.names[j];
 
-            if (dist_to_opt < best_dist) {
-                best_dist = dist_to_opt;
-
-                result[0] = k % size;
-                result[1] = k / size;
+            if (bufIdx > 0) {
+                const printed = try std.fmt.bufPrint(out[bufIdx..], ", ", .{});
+                bufIdx += printed.len;
             }
+
+            const namePair = try std.fmt.bufPrint(out[bufIdx..], "({s}, {s})", .{ name1, name2 });
+            std.debug.assert(namePair.len <= out.len - bufIdx);
+
+            bufIdx += namePair.len;
+            done[i] = true;
+            done[j] = true;
         }
 
-        return result;
+        return out[0..bufIdx];
     }
 
-    fn getScenarioStandard(self: *const Self, k: usize, out: []u32) void {
-        maths.getPermutation(self.m, k, out);
-    }
-
-    fn getScenarioBisexual(self: *const Self, k: usize, available: []bool, out: []u32) void {
-        maths.getKthPairing(self.n, k, available, out);
+    fn getScenario(self: *const Self, k: usize, available: []bool, out: []u32) void {
+        switch (self.mode) {
+            .standard => maths.getPermutation(self.m, k, out),
+            .bisexual => maths.getKthPairing(self.n, k, available, out),
+        }
     }
 };
 
@@ -888,9 +1008,9 @@ test "bisexual N=16" {
     // optimal next truth booth. The order doesn't matter here as this is
     // bisexual mode.
     const optimalTruthBooth = game.findOptimalTruthBooth();
-    _ = std.mem.eql(usize, &.{ 5, 13 }, &optimalTruthBooth);
-    try std.testing.expectEqual(optimalTruthBooth.len, 2);
-    try std.testing.expect((optimalTruthBooth[0] == 5 and optimalTruthBooth[1] == 13) or (optimalTruthBooth[0] == 13 and optimalTruthBooth[1] == 5));
+    try std.testing.expectEqual(optimalTruthBooth.pair.len, 2);
+    try std.testing.expect((optimalTruthBooth.pair[0] == 5 and optimalTruthBooth.pair[1] == 13) or (optimalTruthBooth.pair[0] == 13 and optimalTruthBooth.pair[1] == 5));
+    try std.testing.expectApproxEqAbs(optimalTruthBooth.entropy, 0.9805974409917271, @sqrt(std.math.floatEps(f64)));
 
     // The season continues for another 6 episodes, but my reference material
     // does not do the full calculations of the probabilities, so I cannot be
