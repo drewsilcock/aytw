@@ -329,7 +329,7 @@ pub fn runReplay(season: *const seasons.Season, allocator: std.mem.Allocator) !v
 pub fn runPlay(allocator: std.mem.Allocator) !void {
     const stdin = std.fs.File.stdin().deprecatedReader();
 
-    std.debug.print("Choose mode:\n  [s] Standard (male/female pairs)\n  [b] Bisexual\n> ", .{});
+    std.debug.print("Choose mode:\n  [s] Standard (male/female pairs) [default]\n  [b] Bisexual\n> ", .{});
     const mode_line = try stdin.readUntilDelimiterAlloc(allocator, '\n', 64);
     defer allocator.free(mode_line);
     const mode: aytw.GameMode = if (mode_line.len > 0 and mode_line[0] == 'b') .bisexual else .standard;
@@ -349,7 +349,7 @@ pub fn runPlay(allocator: std.mem.Allocator) !void {
         }
     };
 
-    std.debug.print("Provide custom names? [y/n]: ", .{});
+    std.debug.print("Provide custom names? [y/N]: ", .{});
     const names_line = try std.fs.File.stdin().deprecatedReader().readUntilDelimiterAlloc(allocator, '\n', 64);
     defer allocator.free(names_line);
     const custom_names = names_line.len > 0 and (names_line[0] == 'y' or names_line[0] == 'Y');
