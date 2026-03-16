@@ -523,6 +523,20 @@ pub const Game = struct {
         return out[0..bufIdx];
     }
 
+    pub fn sampleAnswerKey(self: *const Self, out: []u32, rng: std.Random) !void {
+        const size = if (self.mode == .standard) self.m else self.n;
+        std.debug.assert(out.len == size);
+        const k = rng.uintLessThan(usize, self.num_total_scenarios);
+        const available = try self.allocator.alloc(bool, size);
+        defer self.allocator.free(available);
+        self.getScenario(k, available, out);
+    }
+
+    pub fn beamsForMatchup(self: *const Self, matchup: []const u32, answer_key: []const u32) u32 {
+        const num_matches = maths.countMatching(u32, matchup, answer_key);
+        return @intCast(if (self.mode == .bisexual) num_matches / 2 else num_matches);
+    }
+
     fn getScenario(self: *const Self, k: usize, available: []bool, out: []u32) void {
         switch (self.mode) {
             .standard => maths.getPermutation(self.m, k, out),
