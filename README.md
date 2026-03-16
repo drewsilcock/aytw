@@ -1,16 +1,18 @@
 # Are You The Wombat
 
-A game written in Zig where you match up wombats in their winter burrow.
+A mathematical simulation/dating game written in Zig where you match up wombats in their winter burrow with each other.
 
 ## Game Logic
 
 The game has the same underlying logic as reality TV show "Are You The One", but it's about wombats.
 
+*(For legal reasons, this is a work of fiction and any similarity to any actual reality TV game shows, living or dead, is purely coincidental.)*
+
 ### Modes
 
-**Standard mode** = M males and M females giving N=2M total contestants and M! possibile scenarios.
+**Standard mode** = M males and M females giving N=2M total contestant wombats and M! possibile scenarios.
 
-**Bisexual mode** = N total contestants, each of which can be paired with any other contestant other than themselves, giving (N-1)!! = N!/(2^(N/2) * (N/2)!) possible scenarios. (x!! means the double factorial of x, which is like a factorial but you skip every other number, e.g. 5! = 5 * 3 * 1).
+**Bisexual mode** = N total contestants, each of which can be paired with any other wombat other than themselves, giving (N-1)!! = N!/(2^(N/2) * (N/2)!) possible scenarios. (x!! means the double factorial of x, which is like a factorial but you skip every other number, e.g. 5!! = 5 * 3 * 1).
 
 The following tables show the total n# scenarios for each n# contestants, which puts constraints on the solvability of the setup.
 
@@ -58,11 +60,7 @@ The following tables show the total n# scenarios for each n# contestants, which 
 
 | Feature | Status |
 | ------- | ------ |
-| Implement underlying logic and probability calculations for standard mode. | ☑️ Done |
-| Implement underlying logic and probability calculations for bisexual mode. | ☑️ Done |
-| Implement UI scaffolding | □ Todo |
-| Implement UI for main menu | □ Todo |
-| Implement UI for starting game | □ Todo |
-| Implement UI for playing through game | □ Todo |
-| Implement UI for endgame success/fail | □ Todo |
-| Implement UI for sharing game results (QR code?) | □ Todo |
+| Underlying logic and probability calculations for standard mode. | ☑️ Done |
+| Underlying logic and probability calculations for bisexual mode. | ☑️ Done |
+| "Replay mode" for stepping through pre-defined setups | □ Todo |
+| "Game mode" for generating setups and playing through them | □ Todo |
