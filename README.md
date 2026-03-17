@@ -2,6 +2,18 @@
 
 A mathematical simulation/dating game written in Zig where you match up wombats in their winter burrow with each other.
 
+## Getting started
+
+First, install Zig: `brew install zig@0.15`
+
+To run in debug: `zig build run -- play`
+
+To run in release: `zig build run -Doptimize=ReleaseFast -- play` or `zig build -Doptimize=ReleaseFast` then `./zig-out/bin/aytw play`.
+
+## Commands
+
+There are two commands: `play` and `replay`. Play is for playing interactive games where you are guessing the answer, while replay is for replaying pre-defined scenarios, useful for explanation and validation purposes.
+
 ## Game Logic
 
 The game has the same underlying logic as reality TV show "Are You The One", but it's about wombats.
@@ -62,5 +74,5 @@ The following tables show the total n# scenarios for each n# contestants, which 
 | ------- | ------ |
 | Underlying logic and probability calculations for standard mode. | ☑️ Done |
 | Underlying logic and probability calculations for bisexual mode. | ☑️ Done |
-| "Replay mode" for stepping through pre-defined setups | □ Todo |
-| "Game mode" for generating setups and playing through them | □ Todo |
+| "Replay mode" for stepping through pre-defined setups | ☑️ Done |
+| "Game mode" for generating setups and playing through them | ☑️ Done |

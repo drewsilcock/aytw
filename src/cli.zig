@@ -3,7 +3,7 @@ const std = @import("std");
 const aytw = @import("aytw");
 const seasons = @import("seasons");
 
-pub const PauseContext = enum { replay, play };
+pub const PauseContext = enum { replay, play_truth_booth, play_matchup };
 
 pub const PauseAction = union(enum) {
     continue_game,
@@ -52,23 +52,32 @@ pub fn pauseMenu(
     game: *aytw.Game,
     context: PauseContext,
     hints_remaining: *u8,
+    prize: ?*u32,
     allocator: std.mem.Allocator,
 ) !PauseAction {
     while (true) {
         printScenarioCount(game);
         std.debug.print("Options:\n", .{});
         std.debug.print("  [p] Print probabilities\n", .{});
-        if (context == .replay) {
-            std.debug.print("  [t] Optimal truth booth\n", .{});
-            std.debug.print("  [m] Optimal matchup\n", .{});
-        } else {
-            std.debug.print("  [b] Enter truth booth\n", .{});
-            std.debug.print("  [u] Enter matchup\n", .{});
-            if (hints_remaining.* > 0) {
-                std.debug.print("  [h] Use hint ({d} remaining)\n", .{hints_remaining.*});
-            }
+        switch (context) {
+            .replay => {
+                std.debug.print("  [t] Optimal truth booth\n", .{});
+                std.debug.print("  [m] Optimal matchup\n", .{});
+                std.debug.print("  [c] Continue\n", .{});
+            },
+            .play_truth_booth => {
+                std.debug.print("  [b] Enter truth booth\n", .{});
+                if (hints_remaining.* > 0) {
+                    std.debug.print("  [h] Use hint ({d} remaining, costs 250k sedges)\n", .{hints_remaining.*});
+                }
+            },
+            .play_matchup => {
+                std.debug.print("  [u] Enter matchup ceremony\n", .{});
+                if (hints_remaining.* > 0) {
+                    std.debug.print("  [h] Use hint ({d} remaining, costs 250k sedges)\n", .{hints_remaining.*});
+                }
+            },
         }
-        std.debug.print("  [c] Continue\n", .{});
         std.debug.print("  [q] Quit\n", .{});
         std.debug.print("> ", .{});
 
@@ -103,11 +112,15 @@ pub fn pauseMenu(
             } else {
                 std.debug.print("Unknown option '{c}'. Try again.\n", .{line[0]});
             },
-            'b' => if (context == .play) return .enter_truth_booth,
-            'u' => if (context == .play) return .enter_matchup,
-            'h' => if (context == .play) {
+            'b' => if (context == .play_truth_booth) return .enter_truth_booth,
+            'u' => if (context == .play_matchup) return .enter_matchup,
+            'h' => if (context == .play_truth_booth or context == .play_matchup) {
                 if (hints_remaining.* > 0) {
                     hints_remaining.* -= 1;
+                    if (prize) |p| {
+                        p.* = if (p.* >= 250_000) p.* - 250_000 else 0;
+                        std.debug.print("Prize reduced to {d} sedges.\n", .{p.*});
+                    }
                     const result = game.findOptimalTruthBooth();
                     std.debug.print("Hint: optimal truth booth is ({s}, {s}), entropy = {d:.4} Sh\n", .{
                         game.names[result.pair[0]],
@@ -118,7 +131,7 @@ pub fn pauseMenu(
                     std.debug.print("No hints remaining.\n", .{});
                 }
             },
-            'c' => return .continue_game,
+            'c' => if (context == .replay) return .continue_game,
             'q' => return .quit,
             else => std.debug.print("Unknown option '{c}'. Try again.\n", .{line[0]}),
         }
@@ -264,7 +277,7 @@ fn promptMatchupBisexual(game: *aytw.Game, matchup: []u32, allocator: std.mem.Al
     }
 }
 
-fn promptMatchup(game: *aytw.Game, answer_key: []const u32, allocator: std.mem.Allocator) !void {
+fn promptMatchup(game: *aytw.Game, answer_key: []const u32, allocator: std.mem.Allocator) !u32 {
     const size = if (game.mode == .standard) game.m else game.n;
     const matchup = try allocator.alloc(u32, size);
     defer allocator.free(matchup);
@@ -278,6 +291,7 @@ fn promptMatchup(game: *aytw.Game, answer_key: []const u32, allocator: std.mem.A
     const beams = game.beamsForMatchup(matchup, answer_key);
     std.debug.print("Matchup result: {d} beam(s)\n", .{beams});
     try game.applyMatchup(matchup, @intCast(beams));
+    return beams;
 }
 
 pub fn runReplay(season: *const seasons.Season, allocator: std.mem.Allocator) !void {
@@ -294,7 +308,7 @@ pub fn runReplay(season: *const seasons.Season, allocator: std.mem.Allocator) !v
     });
 
     var hints: u8 = 0;
-    var action = try pauseMenu(&game, .replay, &hints, allocator);
+    var action = try pauseMenu(&game, .replay, &hints, null, allocator);
     if (action == .quit) return;
 
     for (season.events, 0..) |event, i| {
@@ -319,7 +333,7 @@ pub fn runReplay(season: *const seasons.Season, allocator: std.mem.Allocator) !v
                 try game.applyMatchup(mu.matchup, mu.num_correct);
             },
         }
-        action = try pauseMenu(&game, .replay, &hints, allocator);
+        action = try pauseMenu(&game, .replay, &hints, null, allocator);
         if (action == .quit) return;
     }
 
@@ -406,25 +420,70 @@ pub fn runPlay(allocator: std.mem.Allocator) !void {
         std.debug.print("You have {d} hint(s) available.\n", .{hints});
     }
 
-    std.debug.print("\nGame started! {d} contestants, {d} possible scenarios.\n", .{
+    const total_days = calcDays(n, mode);
+    const pair_count: u32 = if (mode == .standard) game.m else game.n / 2;
+    var prize: u32 = 1_000_000;
+
+    std.debug.print("\nGame started! {d} contestants, {d} days, {d} possible scenarios.\n", .{
         n,
+        total_days,
         game.numRemainingScenarios(),
     });
 
-    while (game.numRemainingScenarios() > 1) {
-        const action = try pauseMenu(&game, .play, &hints, allocator);
-        switch (action) {
-            .quit => return,
-            .continue_game => {},
-            .enter_truth_booth => try promptTruthBooth(&game, answer_key, allocator),
-            .enter_matchup => try promptMatchup(&game, answer_key, allocator),
+    var won = false;
+    var day: u32 = 1;
+    while (day <= total_days) : (day += 1) {
+        std.debug.print("\n=== Day {d}/{d} | Prize: {d} sedges ===\n", .{ day, total_days, prize });
+
+        std.debug.print("--- Truth Booth ---\n", .{});
+        while (true) {
+            const action = try pauseMenu(&game, .play_truth_booth, &hints, &prize, allocator);
+            switch (action) {
+                .quit => return,
+                .enter_truth_booth => {
+                    try promptTruthBooth(&game, answer_key, allocator);
+                    break;
+                },
+                else => {},
+            }
         }
+
+        std.debug.print("--- Matchup Ceremony ---\n", .{});
+        while (true) {
+            const action = try pauseMenu(&game, .play_matchup, &hints, &prize, allocator);
+            switch (action) {
+                .quit => return,
+                .enter_matchup => {
+                    const beams = try promptMatchup(&game, answer_key, allocator);
+                    if (beams == 0) {
+                        prize = if (prize >= 250_000) prize - 250_000 else 0;
+                        std.debug.print("BLACKOUT! Prize reduced to {d} sedges.\n", .{prize});
+                    }
+                    if (beams == pair_count) {
+                        won = true;
+                    }
+                    break;
+                },
+                else => {},
+            }
+        }
+
+        if (won) break;
     }
 
-    if (game.numRemainingScenarios() == 1) {
-        std.debug.print("\nSolved! Only one scenario remains.\n", .{});
-        try game.printProbabilities();
+    if (won) {
+        std.debug.print("\nYou found all {d} matches! You win {d} sedges!\n", .{ pair_count, prize });
+    } else {
+        std.debug.print("\nGame over! You ran out of days. Better luck next time.\n", .{});
     }
+}
+
+fn calcDays(n: u32, mode: aytw.GameMode) u32 {
+    const half = n / 2;
+    return switch (mode) {
+        .standard => half,
+        .bisexual => half + (half + 3) / 4,
+    };
 }
 
 const NameLabel = enum { male, female, contestant };
