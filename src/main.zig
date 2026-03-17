@@ -1,388 +1,54 @@
 const std = @import("std");
-
-const aytw = @import("aytw");
+const cli = @import("cli");
+const seasons = @import("seasons");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}).init;
     defer std.debug.assert(gpa.deinit() == .ok);
     const allocator = gpa.allocator();
 
-    try standard3Example(allocator);
-    std.debug.print("\n##############\n\n", .{});
-    try standard11Example(allocator);
-    std.debug.print("\n##############\n\n", .{});
-    try bisexual6Example(allocator);
-    std.debug.print("\n##############\n\n", .{});
-    try bisexualSeason8Example(allocator);
+    const args = try std.process.argsAlloc(allocator);
+    defer std.process.argsFree(allocator, args);
+
+    if (args.len < 2) {
+        printUsage();
+        return error.MissingSubcommand;
+    }
+
+    const subcmd = args[1];
+
+    if (std.mem.eql(u8, subcmd, "replay")) {
+        if (args.len < 3) {
+            std.debug.print("Usage: aytw replay <season-id>\n", .{});
+            std.debug.print("Available seasons:\n", .{});
+            for (seasons.all_seasons.keys()) |k| {
+                std.debug.print("  {s}\n", .{k});
+            }
+            return error.MissingSeasonId;
+        }
+        const season = seasons.all_seasons.get(args[2]) orelse {
+            std.debug.print("Unknown season '{s}'\n", .{args[2]});
+            std.debug.print("Available seasons:\n", .{});
+            for (seasons.all_seasons.keys()) |k| {
+                std.debug.print("  {s}\n", .{k});
+            }
+            return error.UnknownSeason;
+        };
+        try cli.runReplay(season, allocator);
+    } else if (std.mem.eql(u8, subcmd, "play")) {
+        try cli.runPlay(allocator);
+    } else {
+        std.debug.print("Unknown subcommand '{s}'\n", .{subcmd});
+        printUsage();
+        return error.UnknownSubcommand;
+    }
 }
 
-/// Run standard mode example with 3 men and 3 women.
-fn standard3Example(allocator: std.mem.Allocator) !void {
-    // https://github.com/daturkel/ayto/blob/ce7b53c962949c46a87f36352ecd6200a913a1be/README.md
-    var game = try aytw.Game.init(allocator, 6, .{
-        .mode = .standard,
-        .names = &.{ "Albert", "Bill", "Carl", "Daisy", "Emily", "Faith" },
-    });
-    defer game.deinit();
-
+fn printUsage() void {
     std.debug.print(
-        "Game initialised N={d}, mode={any}, num remaining scenarios = {d}\n",
-        .{ game.n, game.mode, game.numRemainingScenarios() },
-    );
-    try game.printProbabilities();
-    std.debug.print("\n", .{});
-
-    var tik = std.time.milliTimestamp();
-    std.debug.print("Applying truth booth #1 – Albert + Daisy = fail\n", .{});
-    var tok = std.time.milliTimestamp();
-    try game.applyTruthBooth(0, 0, false);
-    std.debug.print("Done in {d} ms, num remaining scenarios = {d}\n", .{ tok - tik, game.numRemainingScenarios() });
-    try game.printProbabilities();
-    std.debug.print("\n", .{});
-
-    tik = std.time.milliTimestamp();
-    std.debug.print("Applying matchup n# 1 – (Albert, Emily), (Bill, Daisy), (Carl, Faith) = 1 beam\n", .{});
-    tok = std.time.milliTimestamp();
-    try game.applyMatchup(&.{ 1, 0, 2 }, 1);
-    std.debug.print("Done in {d} ms, num remaining scenarios = {d}\n", .{ tok - tik, game.numRemainingScenarios() });
-    try game.printProbabilities();
-    std.debug.print("\n", .{});
-}
-
-fn standard11Example(allocator: std.mem.Allocator) !void {
-    // https://github.com/daturkel/ayto/blob/ce7b53c962949c46a87f36352ecd6200a913a1be/demo.ipynb
-    var game = try aytw.Game.init(allocator, 22, .{
-        .mode = .standard,
-        .names = &.{
-            // Male names
-            "Al", // 0
-            "Bob", // 1
-            "Chuck", // 2
-            "Dale", // 3
-            "Evan", // 4
-            "Frank", // 5
-            "Graham", // 6
-            "Hugh", // 7
-            "Ike", // 8
-            "James", // 9
-            "Kirk", // 10
-            // Female names
-            "Lauren", // 0
-            "Mandy", // 1
-            "Nora", // 2
-            "Olivia", // 3
-            "Pam", // 4
-            "Quinn", // 5
-            "Riley", // 6
-            "Sam", // 7
-            "Tara", // 8
-            "Uma", // 9
-            "Violet", // 10
-        },
-    });
-    defer game.deinit();
-
-    std.debug.print(
-        "Game initialised N={d}, mode={any}, num remaining scenarios = {d}\n",
-        .{ game.n, game.mode, game.numRemainingScenarios() },
-    );
-    try game.printProbabilities();
-    std.debug.print("\n", .{});
-
-    std.debug.print("Applying truth booth – Al + Mandy = fail\n", .{});
-    var tik = std.time.milliTimestamp();
-    try game.applyTruthBooth(0, 1, false);
-    var tok = std.time.milliTimestamp();
-    std.debug.print("Done in {d} ms, num remaining scenarios = {d}\n", .{ tok - tik, game.numRemainingScenarios() });
-    try game.printProbabilities();
-    std.debug.print("\n", .{});
-
-    tik = std.time.milliTimestamp();
-    std.debug.print(
-        "Applying matchup – (Al, Nora), (Bob, Mandy), (Chuck, Olivia), (Dale, Lauren), (Evan, Pam), (Frank, Quinn), (Graham, Riley), (Hugh, Quinn), (Ike, Tara), (James, Uma), (Kirk, Violet) = 3 beams\n",
-        .{},
-    );
-    try game.applyMatchup(&.{ 2, 1, 3, 0, 4, 5, 6, 5, 8, 9, 10 }, 3);
-    tok = std.time.milliTimestamp();
-    std.debug.print("Done in {d} ms, num remaining scenarios = {d}\n", .{ tok - tik, game.numRemainingScenarios() });
-    try game.printProbabilities();
-    std.debug.print("\n", .{});
-}
-
-fn bisexual6Example(allocator: std.mem.Allocator) !void {
-    var game = try aytw.Game.init(allocator, 6, .{
-        .mode = .bisexual,
-        .names = &.{ "Albert", "Bill", "Carl", "Daisy", "Emily", "Faith" },
-    });
-    defer game.deinit();
-
-    std.debug.print(
-        "Game initialised N={d}, mode={any}, num remaining scenarios = {d}\n",
-        .{ game.n, game.mode, game.numRemainingScenarios() },
-    );
-    try game.printProbabilities();
-    std.debug.print("\n", .{});
-
-    std.debug.print("\nApplying truth booth #1 – Albert + Daisy = fail\n", .{});
-    var tik = std.time.milliTimestamp();
-    try game.applyTruthBooth(0, 3, false);
-    var tok = std.time.milliTimestamp();
-    std.debug.print("Done in {d} ms, num remaining scenarios = {d}\n", .{ tok - tik, game.numRemainingScenarios() });
-    try game.printProbabilities();
-    std.debug.print("\n", .{});
-
-    std.debug.print("\nApplying matchup n# 1 – (Albert, Emily), (Bill, Daisy), (Carl, Faith) = 1 beam\n", .{});
-    tik = std.time.milliTimestamp();
-    try game.applyMatchup(&.{ 4, 3, 5, 1, 0, 2 }, 1);
-    tok = std.time.milliTimestamp();
-    std.debug.print("Done in {d} ms, num remaining scenarios = {d}\n", .{ tok - tik, game.numRemainingScenarios() });
-    try game.printProbabilities();
-
-    const optimalTruthBooth = game.findOptimalTruthBooth();
-    std.debug.print(
-        "Optimal truth booth: {any} = ({s}, {s}), entropy = {d}\n",
-        .{
-            optimalTruthBooth.pair,
-            game.names[optimalTruthBooth.pair[0]],
-            game.names[optimalTruthBooth.pair[1]],
-            optimalTruthBooth.entropy,
-        },
-    );
-}
-
-// Construct the Season 8 bisexual game (spoilers).
-// https://github.com/daturkel/pyto/blob/master/AYTO_S8.ipynb
-fn bisexualSeason8Example(allocator: std.mem.Allocator) !void {
-    var game = try aytw.Game.init(allocator, 16, .{
-        .mode = .bisexual,
-        .names = &.{
-            "Aasha", // 0
-            "Amber", // 1
-            "Basit", // 2
-            "Brandon", // 3
-            "Danny", // 4
-            "Jasmine", // 5
-            "Jenna", // 6
-            "Jonathan", // 7
-            "Justin", // 8
-            "Kai", // 9
-            "Kari", // 10
-            "Kylie", // 11
-            "Max", // 12
-            "Nour", // 13
-            "Paige", // 14
-            "Remy", // 15
-        },
-    });
-    defer game.deinit();
-
-    std.debug.print(
-        "Game initialised N={d}, mode={any}, num remaining scenarios = {d}\n",
-        .{ game.n, game.mode, game.numRemainingScenarios() },
-    );
-    try game.printProbabilities();
-    std.debug.print("\n", .{});
-
-    std.debug.print("Calculating optimal matchup\n", .{});
-    var tik = std.time.milliTimestamp();
-    var optimalMatchup = [_]u32{0} ** 16;
-    var optimalMatchupEntropy = try game.findOptimalMatchup(&optimalMatchup);
-    var tok = std.time.milliTimestamp();
-
-    var buf: [2048]u8 = undefined;
-    var optimalMatchupStr = try game.matchupToString(&optimalMatchup, &buf);
-
-    std.debug.print(
-        "Done in {d} ms, optimal matchup = {any} ({s}), entropy = {d}\n",
-        .{ tok - tik, optimalMatchup, optimalMatchupStr, optimalMatchupEntropy },
-    );
-
-    std.debug.print("Applying truth booth – Justin + Nour = fail\n", .{});
-    tik = std.time.milliTimestamp();
-    try game.applyTruthBooth(8, 13, false);
-    tok = std.time.milliTimestamp();
-    std.debug.print("Done in {d} ms, num remaining scenarios = {d}\n", .{ tok - tik, game.numRemainingScenarios() });
-    try game.printProbabilities();
-    std.debug.print("\n", .{});
-
-    std.debug.print("Applying matchup – (Nour, Amber), (Kari, Kylie), (Max, Justin), (Basit, Jonathan), (Aasha, Paige), (Remy, Brandon), (Jasmine, Jenna), (Kai, Danny) = 2\n", .{});
-    tik = std.time.milliTimestamp();
-    try game.applyMatchup(&.{
-        14, // Aasha -> Paige
-        13, // Amber -> Nour
-        7, // Basit -> Jonathan
-        15, // Brandon -> Remy
-        9, // Danny -> Kai
-        6, // Jasmine -> Jenna
-        5, // Jenna -> Jasmine
-        2, // Jonathan -> Basit
-        12, // Justin -> Max
-        4, // Kai -> Danny
-        11, // Kari -> Kylie
-        10, // Kylie -> Kari
-        8, // Max -> Justin
-        1, // Nour -> Amber
-        0, // Paige -> Aasha
-        3, // Remy -> Brandon
-    }, 2);
-    tok = std.time.milliTimestamp();
-    std.debug.print("Done in {d} ms, num remaining scenarios = {d}\n", .{ tok - tik, game.numRemainingScenarios() });
-    try game.printProbabilities();
-    std.debug.print("\n", .{});
-
-    std.debug.print("Applying truth booth – Brandon + Remy = fail\n", .{});
-    tik = std.time.milliTimestamp();
-    try game.applyTruthBooth(3, 15, false);
-    tok = std.time.milliTimestamp();
-    std.debug.print("Done in {d} ms, num remaining scenarios = {d}\n", .{ tok - tik, game.numRemainingScenarios() });
-    try game.printProbabilities();
-    std.debug.print("\n", .{});
-
-    std.debug.print("Applying matchup – (Aasha, Brandon), (Amber, Nour), (Basit, Jonathan), (Danny, Remy), (Jasmine, Justin), (Jenna, Kai), (Kari, Kylie), (Max, Paige) = 2\n", .{});
-    tik = std.time.milliTimestamp();
-    try game.applyMatchup(&.{
-        3, // Aasha -> Brandon
-        13, // Amber -> Nour
-        7, // Basit -> Jonathan
-        0, // Brandon -> Aasha
-        15, // Danny -> Remy
-        8, // Jasmine -> Justin
-        9, // Jenna -> Kai
-        2, // Jonathan -> Basit
-        5, // Justin -> Jasmine
-        6, // Kai -> Jenna
-        11, // Kari -> Kylie
-        10, // Kylie -> Kari
-        14, // Max -> Paige
-        1, // Nour -> Amber
-        12, // Paige -> Max
-        4, // Remy -> Danny
-    }, 2);
-    tok = std.time.milliTimestamp();
-    std.debug.print("Done in {d} ms, num remaining scenarios = {d}\n", .{ tok - tik, game.numRemainingScenarios() });
-    try game.printProbabilities();
-    std.debug.print("\n", .{});
-
-    std.debug.print("Applying truth booth – Jenna + Kai = fail\n", .{});
-    tik = std.time.milliTimestamp();
-    try game.applyTruthBooth(6, 9, false);
-    tok = std.time.milliTimestamp();
-    std.debug.print("Done in {d} ms, num remaining scenarios = {d}\n", .{ tok - tik, game.numRemainingScenarios() });
-    try game.printProbabilities();
-    std.debug.print("\n", .{});
-
-    std.debug.print("Applying matchup – (Jonathan, Brandon), (Aasha, Max), (Paige, Amber), (Kai, Danny), (Jenna, Justin), (Remy, Basit), (Kylie, Kari), (Jasmine, Nour) = 2\n", .{});
-    tik = std.time.milliTimestamp();
-    try game.applyMatchup(&.{
-        12, // Aasha -> Max
-        14, // Amber -> Paige
-        15, // Basit -> Remy
-        7, // Brandon -> Jonathan
-        9, // Danny -> Kai
-        13, // Jasmine -> Nour
-        8, // Jenna -> Justin
-        3, // Jonathan -> Brandon
-        6, // Justin -> Jenna
-        4, // Kai -> Danny
-        11, // Kari -> Kylie
-        10, // Kylie -> Kari
-        0, // Max -> Aasha
-        5, // Nour -> Jasmine
-        1, // Paige -> Amber
-        2, // Remy -> Basit
-    }, 2);
-    tok = std.time.milliTimestamp();
-    std.debug.print("Done in {d} ms, num remaining scenarios = {d}\n", .{ tok - tik, game.numRemainingScenarios() });
-    try game.printProbabilities();
-    std.debug.print("\n", .{});
-
-    std.debug.print("Applying truth booth – Danny + Jenna = fail\n", .{});
-    tik = std.time.milliTimestamp();
-    try game.applyTruthBooth(4, 6, false);
-    tok = std.time.milliTimestamp();
-    std.debug.print("Done in {d} ms, num remaining scenarios = {d}\n", .{ tok - tik, game.numRemainingScenarios() });
-    try game.printProbabilities();
-    std.debug.print("\n", .{});
-
-    std.debug.print("Applying matchup – (Aasha, Remy), (Amber, Nour), (Basit, Danny), (Brandon, Jasmine), (Jenna, Paige), (Jonathan, Kylie), (Justin, Max), (Kai, Kari) = 1\n", .{});
-    tik = std.time.milliTimestamp();
-    try game.applyMatchup(&.{
-        15, // Aasha -> Remy
-        13, // Amber -> Nour
-        4, // Basit -> Danny
-        5, // Brandon -> Jasmine
-        2, // Danny -> Basit
-        3, // Jasmine -> Brandon
-        14, // Jenna -> Paige
-        11, // Jonathan -> Kylie
-        12, // Justin -> Max
-        10, // Kai -> Kari
-        9, // Kari -> Kai
-        7, // Kylie -> Jonathan
-        8, // Max -> Justin
-        1, // Nour -> Amber
-        6, // Paige -> Jenna
-        0, // Remy -> Aasha
-    }, 1);
-    tok = std.time.milliTimestamp();
-    std.debug.print("Done in {d} ms, num remaining scenarios = {d}\n", .{ tok - tik, game.numRemainingScenarios() });
-    try game.printProbabilities();
-    std.debug.print("\n", .{});
-
-    std.debug.print("Applying truth booth – Kari + Kylie = fail\n", .{});
-    tik = std.time.milliTimestamp();
-    try game.applyTruthBooth(10, 11, false);
-    tok = std.time.milliTimestamp();
-    std.debug.print("Done in {d} ms, num remaining scenarios = {d}\n", .{ tok - tik, game.numRemainingScenarios() });
-    try game.printProbabilities();
-    std.debug.print("\n", .{});
-
-    std.debug.print("Applying matchup – (Aasha, Kai), (Amber, Nour), (Basit, Remy), (Brandon, Max), (Jenna, Kylie), (Jonathan, Justin), (Kari, Danny), (Paige, Jasmine) = 0\n", .{});
-    tik = std.time.milliTimestamp();
-    try game.applyMatchup(&.{
-        9, // Aasha -> Kai
-        13, // Amber -> Nour
-        15, // Basit -> Remy
-        12, // Brandon -> Max
-        10, // Danny -> Kari
-        14, // Jasmine -> Paige
-        11, // Jenna -> Kylie
-        8, // Jonathan -> Justin
-        7, // Justin -> Jonathan
-        0, // Kai -> Aasha
-        4, // Kari -> Danny
-        6, // Kylie -> Jenna
-        3, // Max -> Brandon
-        1, // Nour -> Amber
-        5, // Paige -> Jasmine
-        2, // Remy -> Basit
-    }, 0);
-    tok = std.time.milliTimestamp();
-    std.debug.print("Done in {d} ms, num remaining scenarios = {d}\n", .{ tok - tik, game.numRemainingScenarios() });
-    try game.printProbabilities();
-    std.debug.print("\n", .{});
-
-    const optimalTruthBooth = game.findOptimalTruthBooth();
-    std.debug.print(
-        "Optimal truth booth: {any} = ({s}, {s}), entropy = {d}\n",
-        .{
-            optimalTruthBooth.pair,
-            game.names[optimalTruthBooth.pair[0]],
-            game.names[optimalTruthBooth.pair[1]],
-            optimalTruthBooth.entropy,
-        },
-    );
-
-    std.debug.print("Calculating optimal matchup\n", .{});
-    tik = std.time.milliTimestamp();
-    optimalMatchup = [_]u32{0} ** 16;
-    optimalMatchupEntropy = try game.findOptimalMatchup(&optimalMatchup);
-    tok = std.time.milliTimestamp();
-
-    optimalMatchupStr = try game.matchupToString(&optimalMatchup, &buf);
-
-    std.debug.print(
-        "Done in {d} ms, optimal matchup = {any} ({s}), entropy = {d}\n",
-        .{ tok - tik, optimalMatchup, optimalMatchupStr, optimalMatchupEntropy },
-    );
+        \\Usage:
+        \\  aytw replay <season-id>   Replay a pre-defined season step by step
+        \\  aytw play                 Play an interactive game
+        \\
+    , .{});
 }

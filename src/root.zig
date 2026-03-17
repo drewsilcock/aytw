@@ -108,29 +108,26 @@ pub const Game = struct {
 
         const m = n / 2;
 
-        var names: [][]const u8 = try allocator.alloc([]const u8, n);
+        const names: [][]const u8 = blk: {
+            const buf = try allocator.alloc([]const u8, n);
+            errdefer allocator.free(buf);
+            if (options.names) |input_names| {
+                @memcpy(buf, input_names);
+            } else {
+                var prng: std.Random.DefaultPrng = .init(seed: {
+                    var seed: u64 = undefined;
+                    try std.posix.getrandom(std.mem.asBytes(&seed));
+                    break :seed seed;
+                });
+                const rand = prng.random();
+                rand.shuffle([]const u8, &male_names);
+                rand.shuffle([]const u8, &female_names);
+                @memcpy(buf[0..m], male_names[0..m]);
+                @memcpy(buf[m..], female_names[0..m]);
+            }
+            break :blk buf;
+        };
         errdefer allocator.free(names);
-
-        if (options.names) |input_names| {
-            @memcpy(names, input_names);
-        } else {
-            // Choose names randomly by shuffling the list and choosing the first M
-            // male names and N female names.
-            var prng: std.Random.DefaultPrng = .init(blk: {
-                var seed: u64 = undefined;
-                try std.posix.getrandom(std.mem.asBytes(&seed));
-                break :blk seed;
-            });
-
-            const rand = prng.random();
-            rand.shuffle([]const u8, &male_names);
-            rand.shuffle([]const u8, &female_names);
-
-            names = try allocator.alloc([]const u8, n);
-            errdefer names.deinit(allocator);
-            @memcpy(names[0..m], male_names[0..m]);
-            @memcpy(names[m..], female_names[0..m]);
-        }
 
         const num_scenarios = switch (options.mode) {
             .standard => maths.factorial(m),
@@ -521,6 +518,20 @@ pub const Game = struct {
         }
 
         return out[0..bufIdx];
+    }
+
+    pub fn sampleAnswerKey(self: *const Self, out: []u32, rng: std.Random) !void {
+        const size = if (self.mode == .standard) self.m else self.n;
+        std.debug.assert(out.len == size);
+        const k = rng.uintLessThan(usize, self.num_total_scenarios);
+        const available = try self.allocator.alloc(bool, size);
+        defer self.allocator.free(available);
+        self.getScenario(k, available, out);
+    }
+
+    pub fn beamsForMatchup(self: *const Self, matchup: []const u32, answer_key: []const u32) u32 {
+        const num_matches = maths.countMatching(u32, matchup, answer_key);
+        return @intCast(if (self.mode == .bisexual) num_matches / 2 else num_matches);
     }
 
     fn getScenario(self: *const Self, k: usize, available: []bool, out: []u32) void {
